@@ -4,6 +4,9 @@ import requests
 import torch
 import torch.nn as nn
 import streamlit as st
+import json
+import os
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="AgroPredict", page_icon="🌽", layout="wide")
 
@@ -61,6 +64,11 @@ TEXT = {
         "English": "How it works",
         "Pidgin": "How e dey work",
         "Yorùbá": "Bí ó ṣe ń ṣiṣẹ́",
+    },
+    "listen": {
+        "English": "Listen",
+        "Pidgin": "Hear am",
+        "Yorùbá": "Gbọ́",
     },
     "predict": {
         "English": "Predict",
@@ -220,6 +228,63 @@ def fetch_weather(last_day):
     return live[INPUTS].reset_index(drop=True)
 
 
+LANG_CODES = {"English": "en-GB", "Pidgin": "en-NG", "Yorùbá": "yo-NG"}
+
+
+def listen_button(text, lang_label, button_label):
+    code = LANG_CODES[lang_label]
+    html = f"""
+    <button id="b" style="background:#2E7D32;color:white;border:none;padding:10px 18px;
+    border-radius:8px;font-size:16px;cursor:pointer;">🔊 {button_label}</button>
+    <span id="m" style="margin-left:10px;font-family:sans-serif;color:#555;"></span>
+    <script>
+    const text = {json.dumps(text)};
+    const code = {json.dumps(code)};
+    const base = code.split('-')[0];
+    const msg = document.getElementById('m');
+
+    function pickVoice() {{
+      const vs = window.speechSynthesis.getVoices();
+      return vs.find(v => v.lang === code) || vs.find(v => v.lang.startsWith(base));
+    }}
+
+    document.getElementById('b').onclick = () => {{
+      if (!('speechSynthesis' in window)) {{
+        msg.textContent = 'This browser cannot read aloud.';
+        return;
+      }}
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      const v = pickVoice();
+      if (v) {{
+        u.voice = v;
+        u.lang = v.lang;
+        msg.textContent = '';
+      }} else if (base === 'yo') {{
+        msg.textContent = 'No Yoruba voice found on this device.';
+        return;
+      }} else {{
+        u.lang = code;
+      }}
+      window.speechSynthesis.speak(u);
+    }};
+    </script>
+    """
+    components.html(html, height=60)
+
+AUDIO_SLUG = {"Pidgin": "pidgin", "Yorùbá": "yoruba"}
+
+
+def play_message(kind, speech, lang_label, button_label):
+    slug = AUDIO_SLUG.get(lang_label)
+    if slug:
+        for ext in ("mp3", "wav", "m4a"):
+            path = f"audio/{slug}_{kind}.{ext}"
+            if os.path.exists(path):
+                st.audio(path)
+                return
+    listen_button(speech, lang_label, button_label)
+
 # ---------- state ----------
 def set_example(name):
     st.session_state["days"] = pd.DataFrame(EXAMPLES[name]["data"])
@@ -354,7 +419,14 @@ with tab1:
                     <p>{t("ok_body")}</p></div>""",
                     unsafe_allow_html=True,
                 )
-
+            speech = (
+                t("warn_title") + ". " + t("warn_body")
+                + ((" " + t("strong")) if score >= 0.85 else "")
+                if warn
+                else t("ok_title") + ". " + t("ok_body")
+            )
+            kind = ("warn_strong" if score >= 0.85 else "warn") if warn else "ok"
+            play_message(kind, speech, lang, t("listen"))
             signal_date = None
             for i in range(len(rain) - 2):
                 if np.nansum(rain[i:i + 3]) >= 20:
