@@ -60,3 +60,5 @@ NEXT STEPS
 - Add wider weather information (for example regional or satellite data).
 - Use two alert levels: "watch" and "strong warning".
 - Test with real farmer decisions to set the threshold properly.
+LINK:
+https://maizeguard.streamlit.app/

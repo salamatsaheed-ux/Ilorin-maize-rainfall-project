@@ -144,8 +144,7 @@ with st.sidebar:
     )
     st.divider()
     st.caption("Location: Ilorin (8.5°N, 4.55°E)")
-    st.caption("Data: NASA POWER, 1981-2025")
-
+    
 
 # ---------- model ----------
 class RainLSTM(nn.Module):
