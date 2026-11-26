@@ -6,6 +6,10 @@ import torch.nn as nn
 import streamlit as st
 import json
 import streamlit.components.v1 as components
+from google import genai
+from google.genai import types
+
+GEMINI_MODEL = "gemini-3.5-flash"
 
 st.set_page_config(page_title="AgroPredict", page_icon="🌽", layout="wide")
 
@@ -272,6 +276,65 @@ def listen_button(text, lang_label, button_label):
     components.html(html, height=60)
 
 
+def ask_assistant(history, question, lang_label):
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        return "The assistant is not set up yet (missing API key)."
+
+    r = st.session_state.get("last_result")
+    if r:
+        result_text = (
+            f"Latest dry-spell check: risk score {r['score']:.2f}, cut-off {r['threshold']:.2f}, "
+            f"{'WARNING' if r['warn'] else 'no warning'}. Last weather day: {r['last_day']}. "
+            f"Rain in the 14 days: {r['rain_total']:.0f} mm. "
+            f"Dry days in a row now: {r['dry_run']}."
+        )
+    else:
+        result_text = "The farmer has not run a dry-spell check yet."
+
+    onset = load_onset()
+    calendar_text = (
+        f"History (1981-2025): the rains in Ilorin started on median {doy_to_text(onset.median())}, "
+        f"earliest {doy_to_text(onset.min())}, latest {doy_to_text(onset.max())}. "
+        f"Middle half of years: {doy_to_text(onset.quantile(0.25))} to {doy_to_text(onset.quantile(0.75))}."
+    )
+
+    system = (
+        "You are the AgroPredict Assistant, helping maize farmers in Ilorin, Nigeria understand "
+        "rainfall guidance in simple words. "
+        f"Reply in {lang_label} (if Pidgin, use simple Nigerian Pidgin; if Yoruba, use simple Yoruba). "
+        "Keep answers short and clear. "
+        "Only explain the information given below and general maize planting practice. "
+        "Never invent weather forecasts or numbers. "
+        "Explain that the dry-spell score ranks risk and is not an exact probability, "
+        "and that the model catches about 6 in 10 dry spells and gives many false alarms. "
+        "The app covers Ilorin only. If you are unsure, or the question is about something else "
+        "(pesticides, loans, other places), say so and suggest talking to a local agricultural extension officer. "
+        "Do not give medical or legal advice.\n\n"
+        f"{result_text}\n{calendar_text}"
+    )
+
+    contents = [
+        types.Content(
+            role="user" if m["role"] == "user" else "model",
+            parts=[types.Part(text=m["text"])],
+        )
+        for m in history
+    ]
+    contents.append(types.Content(role="user", parts=[types.Part(text=question)]))
+
+    try:
+        client = genai.Client(api_key=api_key)
+        resp = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(system_instruction=system),
+        )
+        return resp.text or "Sorry, I could not answer that."
+    except Exception as e:
+        return f"Sorry, the assistant could not answer right now ({e})."
+
 # ---------- state ----------
 def set_example(name):
     st.session_state["days"] = pd.DataFrame(EXAMPLES[name]["data"])
@@ -372,8 +435,8 @@ m3.metric("Dry days in a row now", dry_run)
 m4.metric("Average max temp", f"{days['T2M_MAX'].mean():.1f} °C")
 
 # ---------- tabs ----------
-tab1, tab2, tab3, tab4 = st.tabs(
-    [t("tab_warning"), t("tab_calendar"), t("tab_charts"), t("tab_how")]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [t("tab_warning"), t("tab_calendar"), t("tab_charts"), t("tab_how"), "Ask AgroPredict"]
 )
 
 with tab1:
@@ -388,6 +451,15 @@ with tab1:
                 )
 
             score = get_score(days, last_day)
+
+            st.session_state["last_result"] = {
+                "score": score,
+                "threshold": THRESHOLD,
+                "warn": warn,
+                "last_day": str(last_day),
+                "rain_total": float(np.nansum(rain)),
+                "dry_run": dry_run,
+            }
             warn = score >= THRESHOLD
 
             st.progress(float(min(max(score, 0.0), 1.0)))
@@ -520,3 +592,28 @@ with tab4:
 **Next steps:** add forecast and regional or satellite data, predict the start of the rains, and test with real farmers.
         """
     )
+with tab5:
+    st.subheader("AgroPredict Assistant")
+    st.caption(
+        "Ask about your result, the planting calendar, or maize planting in Ilorin. "
+        "The assistant can make mistakes, so use it together with the numbers above. "
+        "Do not type personal details."
+    )
+
+    if "chat" not in st.session_state:
+        st.session_state["chat"] = []
+
+    for m in st.session_state["chat"]:
+        with st.chat_message(m["role"]):
+            st.write(m["text"])
+
+    question = st.chat_input("Ask AgroPredict...")
+    if question:
+        with st.chat_message("user"):
+            st.write(question)
+        with st.spinner("Thinking..."):
+            answer = ask_assistant(st.session_state["chat"], question, lang)
+        with st.chat_message("assistant"):
+            st.write(answer)
+        st.session_state["chat"].append({"role": "user", "text": question})
+        st.session_state["chat"].append({"role": "assistant", "text": answer})
