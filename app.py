@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 from google import genai
 from google.genai import types
 
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = ["gemini-3.5-flash", "gemini-2.5-flash"]
 
 st.set_page_config(page_title="AgroPredict", page_icon="🌽", layout="wide")
 
@@ -133,6 +133,11 @@ TEXT = {
         "English": "In most years the rains had already started by this date.",
         "Pidgin": "For most years, rain don already start by this date.",
         "Yorùbá": "Ní ọ̀pọ̀ ọdún, òjò ti bẹ̀rẹ̀ ní ọjọ́ yìí.",
+    },
+        "off_season": {
+        "English": "This date is outside the rainy season, when the dry-spell warning works. Dry weather is normal at this time of year, so no warning is given. Open the Planting calendar tab to see when the rains usually start.",
+        "Pidgin": "This date no dey inside the rainy season wey the dry spell warning dey work. Dry weather normal for this time, so we no dey give warning. Open the Planting calendar tab make you see when rain dey usually start.",
+        "Yorùbá": "Ọjọ́ yìí kò sí nínú àsìkò òjò tí ìkìlọ̀ ọ̀dá ti ń ṣiṣẹ́. Ó jẹ́ àdáyébá kí ojú ọjọ́ gbẹ ní àkókò yìí, nítorí náà a kò fi ìkìlọ̀ kankan hàn. Ẹ ṣí táàbù Kàlẹ́ńdà ìgbìn láti wo ìgbà tí òjò máa ń bẹ̀rẹ̀.",
     },
 }
 
@@ -332,21 +337,22 @@ def ask_assistant(history, question, lang_label):
     }
 
     client = genai.Client(api_key=api_key)
-    for attempt in range(3):
-        try:
-            resp = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=contents,
-                config=types.GenerateContentConfig(system_instruction=system),
-            )
-            return resp.text or "Sorry, I could not answer that."
-        except Exception as e:
-            print("Assistant error:", e)
-            busy = "503" in str(e) or "UNAVAILABLE" in str(e)
-            if busy and attempt < 2:
-                time.sleep(2 + attempt * 3)
-                continue
-            return friendly.get(lang_label, friendly["English"])
+    for model_name in GEMINI_MODEL:
+        for attempt in range(2):
+            try:
+                resp = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(system_instruction=system),
+                )
+                return resp.text or "Sorry, I could not answer that."
+            except Exception as e:
+                print("Assistant error:", model_name, e)
+                if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt == 0:
+                    time.sleep(2)
+                    continue
+                break
+    return friendly.get(lang_label, friendly["English"])
 # ---------- state ----------
 def set_example(name):
     st.session_state["days"] = pd.DataFrame(EXAMPLES[name]["data"])
@@ -393,7 +399,11 @@ st.subheader("1. Choose the weather")
 
 c1, c2, c3, c4 = st.columns([2, 1, 1, 1.4])
 with c1:
-    last_day = st.date_input("Date of the LAST day in the table", key="last_day")
+        last_day = st.date_input(
+        "Date of the LAST day in the table",
+        key="last_day",
+        max_value=(pd.Timestamp.today() - pd.Timedelta(days=3)).date(),
+    )
 with c2:
     st.write("")
     st.button("Dry March example", on_click=set_example, args=("dry",))
@@ -417,7 +427,7 @@ if load_clicked:
     except Exception as e:
         st.error(f"Could not load weather: {e}. You can type the numbers in manually.")
 
-st.caption("Oldest day first, last day at the bottom. Click a cell to edit it.")
+st.caption("Oldest day first, last day at the bottom. The warning looks at the 7 days after the last day. Click a cell to edit it.")
 days = st.data_editor(
     st.session_state["days"],
     key=f"editor_{st.session_state['version']}",
@@ -455,13 +465,10 @@ with tab1:
     if st.button(t("predict"), type="primary"):
         if days.isna().any().any():
             st.error("Some cells are empty. Fill in every cell and try again.")
+        elif last_day.month < 3 or last_day.month > 10:
+            st.session_state["last_result"] = None
+            st.info("🌤️ " + t("off_season"))
         else:
-            if last_day.month < 3 or last_day.month > 10:
-                st.warning(
-                    "The model was trained on March to October only. This date is outside "
-                    "that period, so treat the result with caution."
-                )
-
             score = get_score(days, last_day)
             warn = score >= THRESHOLD
 
@@ -473,6 +480,7 @@ with tab1:
                 "rain_total": float(np.nansum(rain)),
                 "dry_run": dry_run,
             }
+
             st.progress(float(min(max(score, 0.0), 1.0)))
             st.metric(t("risk_label"), f"{score:.2f}")
 
@@ -489,6 +497,7 @@ with tab1:
                     <p>{t("ok_body")}</p></div>""",
                     unsafe_allow_html=True,
                 )
+
             speech = (
                 t("warn_title") + ". " + t("warn_body")
                 + ((" " + t("strong")) if score >= 0.85 else "")
@@ -499,6 +508,7 @@ with tab1:
                 st.caption("🔇 Read-aloud is not available in Yorùbá yet.")
             else:
                 listen_button(speech, lang, t("listen"))
+
             signal_date = None
             for i in range(len(rain) - 2):
                 if np.nansum(rain[i:i + 3]) >= 20:
