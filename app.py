@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import streamlit as st
 import json
-import os
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="AgroPredict", page_icon="🌽", layout="wide")
@@ -272,18 +271,6 @@ def listen_button(text, lang_label, button_label):
     """
     components.html(html, height=60)
 
-AUDIO_SLUG = {"Pidgin": "pidgin", "Yorùbá": "yoruba"}
-
-
-def play_message(kind, speech, lang_label, button_label):
-    slug = AUDIO_SLUG.get(lang_label)
-    if slug:
-        for ext in ("mp3", "wav", "m4a"):
-            path = f"audio/{slug}_{kind}.{ext}"
-            if os.path.exists(path):
-                st.audio(path)
-                return
-    listen_button(speech, lang_label, button_label)
 
 # ---------- state ----------
 def set_example(name):
@@ -425,8 +412,10 @@ with tab1:
                 if warn
                 else t("ok_title") + ". " + t("ok_body")
             )
-            kind = ("warn_strong" if score >= 0.85 else "warn") if warn else "ok"
-            play_message(kind, speech, lang, t("listen"))
+            if lang == "Yorùbá":
+                st.caption("🔇 Read-aloud is not available in Yorùbá yet.")
+            else:
+                listen_button(speech, lang, t("listen"))
             signal_date = None
             for i in range(len(rain) - 2):
                 if np.nansum(rain[i:i + 3]) >= 20:
