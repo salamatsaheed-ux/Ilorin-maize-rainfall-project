@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import streamlit as st
 import json
+import time
 import streamlit.components.v1 as components
 from google import genai
 from google.genai import types
@@ -307,8 +308,8 @@ def ask_assistant(history, question, lang_label):
         "Keep answers short and clear. "
         "Only explain the information given below and general maize planting practice. "
         "Never invent weather forecasts or numbers. "
-        "Explain that the dry-spell score ranks risk and is not an exact probability, "
-        "and that the model catches about 6 in 10 dry spells and gives many false alarms. "
+        "Never describe a warning as certain, and never say a dry spell will definitely happen. "
+        "Do not add disclaimers about the model or repeat accuracy figures unless the farmer asks. "
         "The app covers Ilorin only. If you are unsure, or the question is about something else "
         "(pesticides, loans, other places), say so and suggest talking to a local agricultural extension officer. "
         "Do not give medical or legal advice.\n\n"
@@ -324,17 +325,28 @@ def ask_assistant(history, question, lang_label):
     ]
     contents.append(types.Content(role="user", parts=[types.Part(text=question)]))
 
-    try:
-        client = genai.Client(api_key=api_key)
-        resp = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(system_instruction=system),
-        )
-        return resp.text or "Sorry, I could not answer that."
-    except Exception as e:
-        return f"Sorry, the assistant could not answer right now ({e})."
+    friendly = {
+        "English": "The assistant is busy right now. Please try again in a minute.",
+        "Pidgin": "The assistant dey busy now. Abeg try again after small time.",
+        "Yorùbá": "Olùrànlọ́wọ́ náà ń ṣiṣẹ́ lọ́wọ́ báyìí. Ẹ jọ̀wọ́, ẹ gbìyànjú lẹ́ẹ̀kan sí i láìpẹ́.",
+    }
 
+    client = genai.Client(api_key=api_key)
+    for attempt in range(3):
+        try:
+            resp = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(system_instruction=system),
+            )
+            return resp.text or "Sorry, I could not answer that."
+        except Exception as e:
+            print("Assistant error:", e)
+            busy = "503" in str(e) or "UNAVAILABLE" in str(e)
+            if busy and attempt < 2:
+                time.sleep(2 + attempt * 3)
+                continue
+            return friendly.get(lang_label, friendly["English"])
 # ---------- state ----------
 def set_example(name):
     st.session_state["days"] = pd.DataFrame(EXAMPLES[name]["data"])
@@ -451,6 +463,7 @@ with tab1:
                 )
 
             score = get_score(days, last_day)
+            warn = score >= THRESHOLD
 
             st.session_state["last_result"] = {
                 "score": score,
@@ -460,8 +473,6 @@ with tab1:
                 "rain_total": float(np.nansum(rain)),
                 "dry_run": dry_run,
             }
-            warn = score >= THRESHOLD
-
             st.progress(float(min(max(score, 0.0), 1.0)))
             st.metric(t("risk_label"), f"{score:.2f}")
 
