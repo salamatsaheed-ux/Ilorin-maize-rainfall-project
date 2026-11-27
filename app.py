@@ -1,18 +1,20 @@
+import json
+import time
+
 import numpy as np
 import pandas as pd
 import requests
 import torch
 import torch.nn as nn
 import streamlit as st
-import json
-import time
 import streamlit.components.v1 as components
 from google import genai
 from google.genai import types
 
-GEMINI_MODEL = ["gemini-3.5-flash", "gemini-2.5-flash"]
+st.set_page_config(page_title="MaizeGuard", page_icon="🌽", layout="wide")
 
-st.set_page_config(page_title="AgroPredict", page_icon="🌽", layout="wide")
+GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+THRESHOLD = 0.70
 
 COLS = ["PRECTOTCORR", "RH2M", "T2M_MAX", "T2M_MIN", "T2M_RANGE", "sin_doy", "cos_doy"]
 INPUTS = ["PRECTOTCORR", "RH2M", "T2M_MAX", "T2M_MIN"]
@@ -40,13 +42,13 @@ EXAMPLES = {
 }
 
 # ---------- translations ----------
-# NOTE: Pidgin and Yoruba text is a first draft. Native speakers must review it.
+# Pidgin and Yoruba lines marked NEW were written by the assistant and must be checked by a native speaker.
 LANGS = ["English", "Pidgin", "Yorùbá"]
 
 TEXT = {
     "tagline": {
         "English": "Rainfall-based planting and dry-spell guidance for maize farmers in Ilorin.",
-        "Pidgin": "Rain information to help maize farmers for Ilorin know when to plant and when dry spell fit come.",
+        "Pidgin": "Rain information wey fit help maize farmers for Ilorin to sabi when to plant and when dry spell fit come.",
         "Yorùbá": "Ìmọ̀ràn nípa òjò àti ọ̀dá fún àwọn àgbẹ̀ àgbàdo ní Ìlọrin.",
     },
     "tab_warning": {
@@ -54,35 +56,45 @@ TEXT = {
         "Pidgin": "Dry spell warning",
         "Yorùbá": "Ìkìlọ̀ ọ̀dá",
     },
-    "tab_calendar": {
-        "English": "Planting calendar",
-        "Pidgin": "Planting calendar",
-        "Yorùbá": "Kàlẹ́ńdà ogbìn",
+    "tab_ask": {  # NEW
+        "English": "Ask MaizeGuard",
+        "Pidgin": "Ask MaizeGuard",
+        "Yorùbá": "Béèrè lọ́wọ́ MaizeGuard",
     },
-    "tab_charts": {
-        "English": "Weather charts",
-        "Pidgin": "Weather charts",
-        "Yorùbá": "Àwòrán ojú ọjọ́",
+    "date_label": {  # NEW
+        "English": "Date to check",
+        "Pidgin": "Date wey you wan check",
+        "Yorùbá": "Ọjọ́ tí ẹ fẹ́ ṣàyẹ̀wò",
     },
-    "tab_how": {
-        "English": "How it works",
-        "Pidgin": "How e dey work",
-        "Yorùbá": "Bí ó ṣe ń ṣiṣẹ́",
+    "load_btn": {  # NEW
+        "English": "Load weather",
+        "Pidgin": "Load weather",
+        "Yorùbá": "Gbé ojú ọjọ́ wọlé",
     },
-    "listen": {
-        "English": "Listen",
-        "Pidgin": "Hear am",
-        "Yorùbá": "Gbọ́",
+    "loaded": {  # NEW
+        "English": "Weather loaded.",
+        "Pidgin": "Weather don load.",
+        "Yorùbá": "A ti gbé ojú ọjọ́ wọlé.",
+    },
+    "not_ready": {  # NEW
+        "English": "Weather for this date is not ready yet. Please pick an earlier date.",
+        "Pidgin": "Weather for this date never ready. Abeg pick earlier date.",
+        "Yorùbá": "Ojú ọjọ́ ọjọ́ yìí kò tíì wà. Ẹ jọ̀wọ́, ẹ yan ọjọ́ tó ṣáájú.",
+    },
+    "load_failed": {  # NEW
+        "English": "Could not load the weather. Please check your internet and try again.",
+        "Pidgin": "We no fit load the weather. Abeg check your network make you try again.",
+        "Yorùbá": "A kò lè gbé ojú ọjọ́ wọlé. Ẹ jọ̀wọ́, ẹ ṣàyẹ̀wò íńtánẹ́ẹ̀tì yín, kí ẹ tún gbìyànjú.",
     },
     "predict": {
         "English": "Predict",
         "Pidgin": "Check am",
         "Yorùbá": "Ṣàyẹ̀wò",
     },
-    "risk_label": {
-        "English": "Risk score (0 to 1)",
-        "Pidgin": "Risk score (0 to 1)",
-        "Yorùbá": "Odíwọ̀n ewu (0 sí 1)",
+    "risk_label": {  # NEW wording
+        "English": "Dry-spell risk (0 to 1)",
+        "Pidgin": "Dry spell risk (0 to 1)",
+        "Yorùbá": "Ewu ọ̀dá (0 sí 1)",
     },
     "warn_title": {
         "English": "Warning: a dry spell is likely",
@@ -109,59 +121,31 @@ TEXT = {
         "Pidgin": "We no expect dry spell for the next 7 days. Keep checking, because weather fit change quick quick.",
         "Yorùbá": "A ò retí ọ̀dá láàrín ọjọ́ méje tó ń bọ̀. Ẹ máa ṣàyẹ̀wò lẹ́ẹ̀kan sí i, nítorí ojú ọjọ́ lè yí padà kíákíá.",
     },
-    "cal_title": {
-        "English": "When do the rains usually start in Ilorin?",
-        "Pidgin": "When rain dey usually start for Ilorin?",
-        "Yorùbá": "Ìgbà wo ni òjò máa ń bẹ̀rẹ̀ ní Ìlọrin?",
+    "off_season": {  # NEW wording (calendar tab removed)
+        "English": "This date is outside the rainy season (March to October), when the warning works. Dry weather is normal at this time of year, so no warning is given. You can ask MaizeGuard when the rains usually start.",
+        "Pidgin": "This date no dey inside the rainy season (March to October) wey the warning dey work. Dry weather normal for this time, so we no dey give warning. You fit ask MaizeGuard when rain dey usually start.",
+        "Yorùbá": "Ọjọ́ yìí kò sí nínú àsìkò òjò (Oṣù Kẹta sí Oṣù Kẹwàá) tí ìkìlọ̀ ti ń ṣiṣẹ́. Ó jẹ́ àdáyébá kí ojú ọjọ́ gbẹ ní àkókò yìí, nítorí náà a kò fi ìkìlọ̀ kankan hàn. Ẹ lè béèrè lọ́wọ́ MaizeGuard ìgbà tí òjò máa ń bẹ̀rẹ̀.",
     },
-    "plant_q": {
-        "English": "Pick a date you are thinking of planting",
-        "Pidgin": "Pick the date wey you wan plant",
-        "Yorùbá": "Yan ọjọ́ tí ẹ fẹ́ gbìn",
+    "guide_note": {  # NEW
+        "English": "This is a guide, not a promise. Weather can change, so check again in a few days.",
+        "Pidgin": "Na guide e be, no be promise. Weather fit change, so check again after few days.",
+        "Yorùbá": "Ìtọ́sọ́nà ni èyí, kì í ṣe ìlérí. Ojú ọjọ́ lè yí padà, nítorí náà ẹ tún ṣàyẹ̀wò lẹ́yìn ọjọ́ díẹ̀.",
     },
-    "verdict_early": {
-        "English": "Before this date, the rains had NOT yet started in most years. Planting now would be early in most years.",
-        "Pidgin": "Before this date, rain never start for most years. To plant now go be early for most years.",
-        "Yorùbá": "Ṣáájú ọjọ́ yìí, òjò kò tíì bẹ̀rẹ̀ ní ọ̀pọ̀ ọdún. Ìgbìn ní ọjọ́ yìí máa tètè jù ní ọ̀pọ̀ ọdún.",
-    },
-    "verdict_mid": {
-        "English": "In more than half of the years the rains had started by this date, but a good number of years were still late.",
-        "Pidgin": "For more than half of the years, rain don start by this date, but plenty years rain still late.",
-        "Yorùbá": "Ní ìdajì ọdún tó pọ̀ jù, òjò ti bẹ̀rẹ̀ ní ọjọ́ yìí, ṣùgbọ́n ọ̀pọ̀ ọdún ni ó pẹ́.",
-    },
-    "verdict_late": {
-        "English": "In most years the rains had already started by this date.",
-        "Pidgin": "For most years, rain don already start by this date.",
-        "Yorùbá": "Ní ọ̀pọ̀ ọdún, òjò ti bẹ̀rẹ̀ ní ọjọ́ yìí.",
-    },
-        "off_season": {
-        "English": "This date is outside the rainy season, when the dry-spell warning works. Dry weather is normal at this time of year, so no warning is given. Open the Planting calendar tab to see when the rains usually start.",
-        "Pidgin": "This date no dey inside the rainy season wey the dry spell warning dey work. Dry weather normal for this time, so we no dey give warning. Open the Planting calendar tab make you see when rain dey usually start.",
-        "Yorùbá": "Ọjọ́ yìí kò sí nínú àsìkò òjò tí ìkìlọ̀ ọ̀dá ti ń ṣiṣẹ́. Ó jẹ́ àdáyébá kí ojú ọjọ́ gbẹ ní àkókò yìí, nítorí náà a kò fi ìkìlọ̀ kankan hàn. Ẹ ṣí táàbù Kàlẹ́ńdà ìgbìn láti wo ìgbà tí òjò máa ń bẹ̀rẹ̀.",
+    "listen": {
+        "English": "Listen",
+        "Pidgin": "Hear am",
+        "Yorùbá": "Gbọ́",
     },
 }
 
-# ---------- sidebar (language picked first) ----------
+# ---------- sidebar: language only ----------
 with st.sidebar:
     lang = st.selectbox("Language / Èdè", LANGS)
 
-    def t(key):
-        return TEXT[key][lang]
 
-    st.header("Settings")
-    mode = st.radio(
-        "Alert sensitivity",
-        ["Catch more dry spells (0.70)", "Fewer false alarms (0.80)"],
-    )
-    THRESHOLD = 0.70 if "0.70" in mode else 0.80
-    st.caption(
-        "A lower cut-off catches more dry spells but gives more false alarms. "
-        "We chose 0.70 because a missed dry spell usually costs a farmer more "
-        "than an unnecessary precaution."
-    )
-    st.divider()
-    st.caption("Location: Ilorin (8.5°N, 4.55°E)")
-    
+def t(key):
+    return TEXT[key][lang]
+
 
 # ---------- model ----------
 class RainLSTM(nn.Module):
@@ -237,6 +221,7 @@ def fetch_weather(last_day):
     return live[INPUTS].reset_index(drop=True)
 
 
+# ---------- read-aloud ----------
 LANG_CODES = {"English": "en-GB", "Pidgin": "en-NG", "Yorùbá": "yo-NG"}
 
 
@@ -282,6 +267,7 @@ def listen_button(text, lang_label, button_label):
     components.html(html, height=60)
 
 
+# ---------- assistant ----------
 def ask_assistant(history, question, lang_label):
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -307,7 +293,7 @@ def ask_assistant(history, question, lang_label):
     )
 
     system = (
-        "You are the AgroPredict Assistant, helping maize farmers in Ilorin, Nigeria understand "
+        "You are the MaizeGuard Assistant, helping maize farmers in Ilorin, Nigeria understand "
         "rainfall guidance in simple words. "
         f"Reply in {lang_label} (if Pidgin, use simple Nigerian Pidgin; if Yoruba, use simple Yoruba). "
         "Keep answers short and clear. "
@@ -315,6 +301,8 @@ def ask_assistant(history, question, lang_label):
         "Never invent weather forecasts or numbers. "
         "Never describe a warning as certain, and never say a dry spell will definitely happen. "
         "Do not add disclaimers about the model or repeat accuracy figures unless the farmer asks. "
+        "If the farmer asks how reliable it is, answer honestly: the model catches about 6 in 10 "
+        "dry spells and gives many false alarms. "
         "The app covers Ilorin only. If you are unsure, or the question is about something else "
         "(pesticides, loans, other places), say so and suggest talking to a local agricultural extension officer. "
         "Do not give medical or legal advice.\n\n"
@@ -337,7 +325,7 @@ def ask_assistant(history, question, lang_label):
     }
 
     client = genai.Client(api_key=api_key)
-    for model_name in GEMINI_MODEL:
+    for model_name in GEMINI_MODELS:
         for attempt in range(2):
             try:
                 resp = client.models.generate_content(
@@ -353,15 +341,15 @@ def ask_assistant(history, question, lang_label):
                     continue
                 break
     return friendly.get(lang_label, friendly["English"])
+
+
 # ---------- state ----------
 def set_example(name):
     st.session_state["days"] = pd.DataFrame(EXAMPLES[name]["data"])
     st.session_state["last_day"] = EXAMPLES[name]["date"]
-    st.session_state["version"] += 1
 
 
-if "version" not in st.session_state:
-    st.session_state["version"] = 0
+if "days" not in st.session_state:
     st.session_state["days"] = pd.DataFrame(EXAMPLES["dry"]["data"])
     st.session_state["last_day"] = EXAMPLES["dry"]["date"]
 
@@ -387,20 +375,20 @@ st.markdown(
 st.markdown(
     f"""
     <div class="hero">
-      <h1>🌽 AgroPredict</h1>
+      <h1>🌽 MaizeGuard</h1>
       <p>{t("tagline")}</p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# ---------- weather input ----------
-st.subheader("1. Choose the weather")
+# ---------- 1. weather information ----------
+st.subheader("1. Weather information")
 
-c1, c2, c3, c4 = st.columns([2, 1, 1, 1.4])
+c1, c2, c3, c4 = st.columns([2, 1, 1, 1.2])
 with c1:
-        last_day = st.date_input(
-        "Date of the LAST day in the table",
+    last_day = st.date_input(
+        t("date_label"),
         key="last_day",
         max_value=(pd.Timestamp.today() - pd.Timedelta(days=3)).date(),
     )
@@ -412,34 +400,23 @@ with c3:
     st.button("Wet June example", on_click=set_example, args=("wet",))
 with c4:
     st.write("")
-    load_clicked = st.button("Load weather from NASA")
+    load_clicked = st.button(t("load_btn"))
 
 if load_clicked:
     try:
-        with st.spinner("Getting weather from NASA POWER..."):
+        with st.spinner("..."):
             live = fetch_weather(last_day)
         if len(live) != 14 or live.isna().any().any():
-            st.error("That date is not fully available yet (data arrives a few days late). Pick an earlier date.")
+            st.error(t("not_ready"))
         else:
             st.session_state["days"] = live
-            st.session_state["version"] += 1
-            st.success("Weather loaded. You can still edit the numbers.")
+            st.success(t("loaded"))
     except Exception as e:
-        st.error(f"Could not load weather: {e}. You can type the numbers in manually.")
+        print("Weather error:", e)
+        st.error(t("load_failed"))
 
-st.caption("Oldest day first, last day at the bottom. The warning looks at the 7 days after the last day. Click a cell to edit it.")
-days = st.data_editor(
-    st.session_state["days"],
-    key=f"editor_{st.session_state['version']}",
-    column_config={
-        "PRECTOTCORR": st.column_config.NumberColumn("Rain (mm)", min_value=0.0, format="%.1f"),
-        "RH2M": st.column_config.NumberColumn("Humidity (%)", min_value=0.0, max_value=100.0, format="%.0f"),
-        "T2M_MAX": st.column_config.NumberColumn("Max temp (°C)", format="%.1f"),
-        "T2M_MIN": st.column_config.NumberColumn("Min temp (°C)", format="%.1f"),
-    },
-)
-
-# ---------- weather summary ----------
+# ---------- 2. weather summary ----------
+days = st.session_state["days"]
 rain = days["PRECTOTCORR"].values
 dates = pd.date_range(end=last_day, periods=14)
 
@@ -450,21 +427,21 @@ for r in reversed(rain):
     else:
         break
 
+st.subheader("2. Weather summary")
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Rain in 14 days", f"{np.nansum(rain):.0f} mm")
 m2.metric("Rainy days", f"{int((rain >= 1.0).sum())} of 14")
 m3.metric("Dry days in a row now", dry_run)
-m4.metric("Average max temp", f"{days['T2M_MAX'].mean():.1f} °C")
+m4.metric("Average max temperature", f"{days['T2M_MAX'].mean():.1f} °C")
 
-# ---------- tabs ----------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    [t("tab_warning"), t("tab_calendar"), t("tab_charts"), t("tab_how"), "Ask AgroPredict"]
-)
+# ---------- 3. guidance ----------
+st.subheader("3. Your guidance")
+tab1, tab2 = st.tabs([t("tab_warning"), t("tab_ask")])
 
 with tab1:
     if st.button(t("predict"), type="primary"):
         if days.isna().any().any():
-            st.error("Some cells are empty. Fill in every cell and try again.")
+            st.error(t("load_failed"))
         elif last_day.month < 3 or last_day.month > 10:
             st.session_state["last_result"] = None
             st.info("🌤️ " + t("off_season"))
@@ -515,110 +492,19 @@ with tab1:
                     signal_date = dates[i + 2]
             if signal_date is not None:
                 st.info(
-                    f"🌱 Rain-start signal: 20 mm or more fell over 3 days ending "
-                    f"{signal_date.strftime('%d %b %Y')}. This is a simple rule, not the model. "
-                    "The full onset rule also needs no long dry spell afterwards."
+                    f"🌱 Good rain: 20 mm or more fell over 3 days ending "
+                    f"{signal_date.strftime('%d %b %Y')}."
                 )
 
-            out = days.copy()
-            out.insert(0, "date", dates.date)
-            out["risk_score"] = round(score, 3)
-            out["warning"] = "YES" if warn else "NO"
-            st.download_button(
-                "Download this result (CSV)",
-                out.to_csv(index=False),
-                file_name="dry_spell_result.csv",
-                mime="text/csv",
-            )
-
-            st.caption(
-                "The score ranks risk and is not an exact probability. In tests on "
-                "2013-2025 the model caught about 6 in 10 dry spells at the 0.70 cut-off, "
-                "with many false alarms."
-            )
+            st.caption(t("guide_note"))
 
 with tab2:
-    st.subheader(t("cal_title"))
-    try:
-        onset = load_onset()
-        n_years = len(onset)
-
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Median start", doy_to_text(onset.median()))
-        k2.metric("Earliest on record", doy_to_text(onset.min()))
-        k3.metric("Latest on record", doy_to_text(onset.max()))
-        k4.metric(
-            "Middle half of years",
-            f"{doy_to_text(onset.quantile(0.25))} to {doy_to_text(onset.quantile(0.75))}",
-        )
-
-        st.write("**Start of the rains each year (day of the year)**")
-        st.line_chart(onset)
-        st.caption("Day 107 is 17 April. A higher line means a later start. The start varies a lot from year to year.")
-
-        pick = st.date_input(
-            t("plant_q"),
-            value=pd.Timestamp("2026-04-20").date(),
-            key="plant_date",
-        )
-        pick_doy = pd.Timestamp(2001, pick.month, pick.day).day_of_year
-        started = int((onset <= pick_doy).sum())
-        share = started / n_years * 100
-
-        st.metric(
-            f"Years when the rains had already started by {pick.strftime('%d %b')}",
-            f"{started} of {n_years}",
-            f"{share:.0f}% of years",
-            delta_color="off",
-        )
-        if share < 50:
-            st.warning(t("verdict_early"))
-        elif share < 80:
-            st.info(t("verdict_mid"))
-        else:
-            st.success(t("verdict_late"))
-
-        st.caption(
-            "This is a history, not a forecast for this year. The rains' start is defined as 20 mm of "
-            "rain over 3 days, followed by no dry spell longer than 7 days in the next 30 days. "
-            "Use it together with the dry-spell warning before you plant."
-        )
-    except FileNotFoundError:
-        st.error("onset_history.csv was not found. Put it in the same folder as app.py.")
-
-with tab3:
-    chart_df = days.copy()
-    chart_df.index = dates
-    st.write("**Daily rainfall (mm)**")
-    st.bar_chart(chart_df["PRECTOTCORR"])
-    st.write("**Temperature (°C)**")
-    st.line_chart(chart_df[["T2M_MAX", "T2M_MIN"]])
-
-with tab4:
-    st.markdown(
-        """
-**AgroPredict has two parts:**
-
-1. **Planting calendar:** shows when the rains started in each year from 1981 to 2025, so a farmer can see how early or late a planting date is compared with history.
-2. **Dry-spell warning:** an LSTM model reads 14 days of rainfall, humidity and temperature plus the time of year, and gives a risk score for a dry spell (8 or more days in a row with less than 1 mm of rain) starting in the next 7 days.
-
-**How the warning was tested:** trained on 1981-2006, checked on 2007-2012, and tested on 2013-2025 (never seen in training).
-
-**Honest results:**
-- Test AUC about 0.83 (0.5 is guessing, 1.0 is perfect).
-- At the 0.70 cut-off it caught about 62% of dry spells, with many false alarms.
-- Most of the skill comes from the time of year. Recent weather adds a small gain, and simple models scored similarly.
-- It works well in some years and poorly in others.
-
-**Next steps:** add forecast and regional or satellite data, predict the start of the rains, and test with real farmers.
-        """
-    )
-with tab5:
-    st.subheader("AgroPredict Assistant")
+    st.subheader("MaizeGuard Assistant")
     st.caption(
-        "Ask about your result, the planting calendar, or maize planting in Ilorin. "
-        "The assistant can make mistakes, so use it together with the numbers above. "
-        "Do not type personal details."
+        "Ask about your result or maize planting in Ilorin. "
+        "For example: \"When do the rains usually start?\" "
+        "The assistant can make mistakes, so use it together with the warning. "
+        "Please do not type personal details."
     )
 
     if "chat" not in st.session_state:
@@ -628,7 +514,7 @@ with tab5:
         with st.chat_message(m["role"]):
             st.write(m["text"])
 
-    question = st.chat_input("Ask AgroPredict...")
+    question = st.chat_input("Ask MaizeGuard...")
     if question:
         with st.chat_message("user"):
             st.write(question)
@@ -638,3 +524,20 @@ with tab5:
             st.write(answer)
         st.session_state["chat"].append({"role": "user", "text": question})
         st.session_state["chat"].append({"role": "assistant", "text": answer})
+
+# ---------- about ----------
+st.divider()
+st.markdown("**About MaizeGuard**")
+st.write(
+    "MaizeGuard helps maize farmers in Ilorin plan around dry spells. "
+    "It looks at the last 14 days of weather and checks whether 8 or more days with almost no rain "
+    "may start in the next 7 days."
+)
+st.write(
+    "It learned from weather records for Ilorin from 1981 to 2025 (NASA POWER data) and was tested "
+    "on the years 2013 to 2025."
+)
+st.write(
+    "It is a guide, not a promise. It catches about 6 in 10 dry spells, and sometimes it gives a "
+    "warning when no dry spell comes. It works for Ilorin only, from March to October."
+)
