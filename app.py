@@ -403,10 +403,10 @@ st.markdown(
     """
     <style>
     .hero {
-        background: #000000; border-radius: 16px; padding: 14px 12px 18px 12px;
+        background: #000000; border-radius: 16px; padding: 8px 12px 12px 12px;
         margin-bottom: 18px; text-align: center;
     }
-    .hero img { width: 100%; max-width: 560px; height: auto; display: block; margin: 0 auto; }
+    .hero img { width: 100%; max-width: 260px; height: auto; display: block; margin: 0 auto; }
     .hero h1 { margin: 0; font-size: 2rem; color: white; }
     .hero p { margin: 8px 0 0 0; font-size: 1.05rem; color: #CDE7CD; }
     .card { padding: 20px 24px; border-radius: 14px; margin-top: 10px; }
