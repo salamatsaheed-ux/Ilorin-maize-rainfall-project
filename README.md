@@ -1,64 +1,94 @@
-ILORIN DRY SPELL PREDICTION - SIMPLE SUMMARY
+<p align="center">
+    <img src="maizeguard_logo.jpg" alt="MaizeGuard logo" width="520">
+</p>
 
-GOAL
-Warn farmers in Ilorin if a damaging dry spell (8 or more days in a row
-with less than 1 mm of rain) will start in the next 7 days.
+# MaizeGuard
 
-DATA
-NASA POWER daily weather for Ilorin, 1981-2025 (rainfall, humidity,
-temperature) plus time of year. Only the rainy season (March-October) is used.
+Rainfall-based planting and dry-spell guidance for maize farmers in Ilorin, Kwara State, Nigeria.
 
-MODEL
-An LSTM (a neural network that reads sequences). It looks at the last 14 days
-of weather and gives each day a score from 0 to 1: how likely a dry spell is.
+**Live app:** https://maizeguard.streamlit.app
 
-HOW THE DATA WAS SPLIT (past to future, no peeking)
-- Train: 1981-2006
-- Validation: 2007-2012 (used to pick the best model and check it)
-- Test: 2013-2025 (never used for training; the final check)
+## The problem
 
-WHAT THE THRESHOLD IS
-The model gives a score between 0 and 1. The threshold is the cut-off.
-If the score is 0.70 or higher, the model gives a warning.
-- Lower threshold = more warnings (catches more dry spells, more false alarms)
-- Higher threshold = fewer warnings (fewer false alarms, misses more dry spells)
-Note: 0.70 does NOT mean a 70% chance. Dry spells are rare, so the model was
-trained to take them extra seriously, which pushes its scores up.
+Maize farmers in Ilorin plant when the rains start, but the start varies a lot from year to year, and a long dry spell after planting can destroy young plants. Farmers need simple, local guidance on when dry spells are likely.
 
-CHOSEN THRESHOLD: 0.70
-A missed dry spell can cost a farmer a crop and replanting. A false alarm
-usually only means waiting a few days or a small precaution. So we chose a
-threshold that catches more dry spells, even with more false alarms.
-(The automatic best-F1 choice was 0.80. We deliberately chose 0.70.
-This is our judgement about costs, not something the data proves.)
+## What MaizeGuard does
 
-TEST RESULTS (threshold 0.70, 3,185 test days, 204 followed by a dry spell)
-- Test AUC: about 0.82 (0.5 = guessing, 1.0 = perfect)
-- Dry spells warned about: 126 of 204 (about 62%)
-- Dry spells missed: 78
-- False alarms: 332
-- When it warns, it is right about 1 time in 4
-(Numbers can change slightly if the notebook is rerun.)
+- **Dry-spell warning:** checks the last 14 days of weather and warns if a dry spell (8 or more days in a row with less than 1 mm of rain) may start in the next 7 days.
+- **Ask MaizeGuard:** an assistant that explains the result and answers questions about maize planting in Ilorin, using a written knowledge base.
+- **Local languages:** English, Pidgin and Yorùbá. Read-aloud is available for English and Pidgin text using the browser's voice.
+- **Weather summary:** rain in the last 14 days, rainy days, dry days in a row, and average maximum temperature.
 
-WHAT WE TRIED
-1. Fixed the class weighting (it was upside down), so the model now takes
-   dry spells seriously.
-2. Added "days since last rain" and "rain in last 7 days": no real gain,
-   because the model already sees the last 14 days.
-3. Tried a 30-day window instead of 14: no real gain either.
-So we kept the simplest version (7 inputs, 14-day window).
+## How it works
 
-STRENGTHS AND WEAKNESSES
-- Works well in many years (2016, 2017, 2019, 2020: AUC above 0.94).
-- Fails in some years (2013 and 2014 are close to guessing; 2024 missed
-  most dry spells).
-- Gives false alarms even in years with no dry spells (2023, 2025).
-- Uses only local weather, so it cannot see the larger weather systems
-  that cause dry spells.
+- **Data:** NASA POWER daily weather for Ilorin (8.5°N, 4.55°E), 1981 to 2025: rainfall, humidity, and maximum and minimum temperature.
+- **Target:** will a dry spell start in the next 7 days? The input is the previous 14 days of weather plus the time of year.
+- **Model:** an LSTM neural network built with PyTorch, trained on rainy-season days (March to October).
+- **Split by time, with no peeking:** training 1981 to 2006, validation 2007 to 2012, testing 2013 to 2025.
+- **Alert level:** a warning is shown when the model's risk is 0.70 or higher. We chose 0.70 because a missed dry spell usually costs a farmer more than an unnecessary precaution.
+- **Rains-start history:** the start of the rains is defined as at least 20 mm of rain over 3 days with no dry stretch longer than 7 days in the following 30 days. In 1981 to 2025 the median start was about 17 April, the earliest was 20 March and the latest was 9 June. In half of the years it fell between 8 April and 6 May.
 
-NEXT STEPS
-- Add wider weather information (for example regional or satellite data).
-- Use two alert levels: "watch" and "strong warning".
-- Test with real farmer decisions to set the threshold properly.
-LINK:
-https://maizeguard.streamlit.app/
+## Results (test years 2013 to 2025)
+
+- Test AUC of about 0.82 to 0.84 (0.5 is guessing, 1.0 is perfect).
+- At the 0.70 alert level the model caught about 6 in 10 dry spells (126 of 204 test days), with 78 missed and 332 false-alarm days.
+- Performance varies by year: strong in 2016, 2017, 2019 and 2020, and weak in 2013, 2014 and 2024.
+- A simple baseline using only the time of year reached a test AUC of about 0.81. Most of the skill therefore comes from the season, and recent weather adds a small gain.
+- We also tried predicting the start of the rains with the same approach. It did not beat the time-of-year baseline, so the rains-start information is shown as history and not as a forecast.
+
+## Limitations
+
+- It is a short-range warning: the 7 days after the last observed day. It cannot forecast months ahead.
+- It catches about 6 in 10 dry spells and sometimes warns when none comes.
+- It was trained on Ilorin only and on March to October only.
+- It does not predict how much rain will fall.
+- The assistant can make mistakes. It is told to stay within the knowledge base and never to invent forecasts.
+- Pidgin and Yorùbá read-aloud depend on the voices installed on the user's device.
+
+## Run it locally
+
+```
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The assistant needs a Gemini API key. Create `.streamlit/secrets.toml` containing the line below and never commit it to GitHub:
+
+```
+GEMINI_API_KEY = "your-key-here"
+```
+
+## Project files
+
+```
+app.py                  the Streamlit app
+knowledge_base.md       facts the assistant uses
+Ilorin-rainfall.ipynb   data work, model training and evaluation
+Ilorin_rain_lstm.pt     trained model weights
+scaling_stats.csv       training mean and spread used to prepare inputs
+onset_history.csv       start of the rains, 1981 to 2025
+data/                   NASA POWER data for Ilorin
+.streamlit/config.toml  app theme
+maizeguard_logo.png     logo
+```
+
+## Data and credits
+
+- Weather data: NASA POWER (https://power.larc.nasa.gov)
+- Built with PyTorch, Streamlit and the Google Gemini API
+
+## Roadmap
+
+- Sign-in and a database to record usage (with user consent) so the app can improve
+- SMS alerts for farmers
+- Weather-forecast and regional data to extend the warning range
+- Prediction of the start of the rains
+- More local-language support and voice input
+- Testing with real farmers in Ilorin
+
+## Team
+
+- Salamat Saheed Togun
+- Owolabi Zainab 
+- Olasehinde Jesutomi 
+- Falusi Omolola

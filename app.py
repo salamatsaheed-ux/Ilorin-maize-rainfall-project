@@ -1,4 +1,5 @@
 import json
+import base64
 import time
 
 import numpy as np
@@ -11,44 +12,40 @@ import streamlit.components.v1 as components
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="MaizeGuard", page_icon="🌽", layout="wide")
+try:
+    from PIL import Image
+    _icon = Image.open("maizeguard_icon.png")
+except Exception:
+    _icon = "🌽"
+
+st.set_page_config(page_title="MaizeGuard", page_icon=_icon, layout="wide")
 
 GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
 THRESHOLD = 0.70
+LEARN_MORE_URL = "https://github.com/salamatsaheed-ux/Ilorin-maize-rainfall-project#readme"
 
 COLS = ["PRECTOTCORR", "RH2M", "T2M_MAX", "T2M_MIN", "T2M_RANGE", "sin_doy", "cos_doy"]
 INPUTS = ["PRECTOTCORR", "RH2M", "T2M_MAX", "T2M_MIN"]
 LAT, LON = 8.5, 4.55
 
-EXAMPLES = {
-    "dry": {
-        "date": pd.Timestamp("2026-03-19").date(),
-        "data": {
-            "PRECTOTCORR": [0, 0, 0, 0, 0, 0.3, 0, 0, 0, 0, 0, 0, 0.1, 0],
-            "RH2M": [48, 45, 50, 47, 46, 52, 44, 43, 45, 44, 42, 43, 46, 41],
-            "T2M_MAX": [35, 35.5, 36, 35.8, 36.2, 35, 36.5, 36.8, 37, 36.6, 37.2, 37, 36.8, 37.3],
-            "T2M_MIN": [23, 23.5, 24, 23.8, 24.2, 23.6, 24.5, 24.4, 24.8, 24.6, 25, 24.7, 24.5, 25],
-        },
-    },
-    "wet": {
-        "date": pd.Timestamp("2026-06-12").date(),
-        "data": {
-            "PRECTOTCORR": [12, 25, 8, 0, 30, 15, 5, 22, 18, 10, 0, 28, 14, 9],
-            "RH2M": [88, 90, 86, 80, 91, 89, 85, 90, 88, 87, 82, 91, 89, 86],
-            "T2M_MAX": [29, 28.5, 29.5, 31, 28, 29, 30, 28.5, 29, 29.5, 30.5, 28, 29, 29.5],
-            "T2M_MIN": [22, 21.8, 22.2, 22.5, 21.5, 22, 22.1, 21.7, 22, 22.3, 22.4, 21.6, 21.9, 22],
-        },
+EXAMPLE = {
+    "date": pd.Timestamp("2026-03-19").date(),
+    "data": {
+        "PRECTOTCORR": [0, 0, 0, 0, 0, 0.3, 0, 0, 0, 0, 0, 0, 0.1, 0],
+        "RH2M": [48, 45, 50, 47, 46, 52, 44, 43, 45, 44, 42, 43, 46, 41],
+        "T2M_MAX": [35, 35.5, 36, 35.8, 36.2, 35, 36.5, 36.8, 37, 36.6, 37.2, 37, 36.8, 37.3],
+        "T2M_MIN": [23, 23.5, 24, 23.8, 24.2, 23.6, 24.5, 24.4, 24.8, 24.6, 25, 24.7, 24.5, 25],
     },
 }
 
 # ---------- translations ----------
-# Pidgin and Yoruba lines marked NEW were written by the assistant and must be checked by a native speaker.
+# Lines marked NEW were written by the assistant: a native speaker must check them.
 LANGS = ["English", "Pidgin", "Yorùbá"]
 
 TEXT = {
     "tagline": {
         "English": "Rainfall-based planting and dry-spell guidance for maize farmers in Ilorin.",
-        "Pidgin": "Rain information wey fit help maize farmers for Ilorin to sabi when to plant and when dry spell fit come.",
+        "Pidgin": "Rain information to help maize farmers for Ilorin know when to plant and when dry spell fit come.",
         "Yorùbá": "Ìmọ̀ràn nípa òjò àti ọ̀dá fún àwọn àgbẹ̀ àgbàdo ní Ìlọrin.",
     },
     "tab_warning": {
@@ -56,45 +53,60 @@ TEXT = {
         "Pidgin": "Dry spell warning",
         "Yorùbá": "Ìkìlọ̀ ọ̀dá",
     },
-    "tab_ask": {  # NEW
+    "tab_ask": {
         "English": "Ask MaizeGuard",
         "Pidgin": "Ask MaizeGuard",
         "Yorùbá": "Béèrè lọ́wọ́ MaizeGuard",
     },
-    "date_label": {  # NEW
+    "date_label": {
         "English": "Date to check",
         "Pidgin": "Date wey you wan check",
         "Yorùbá": "Ọjọ́ tí ẹ fẹ́ ṣàyẹ̀wò",
     },
-    "load_btn": {  # NEW
+    "load_btn": {
         "English": "Load weather",
         "Pidgin": "Load weather",
         "Yorùbá": "Gbé ojú ọjọ́ wọlé",
     },
-    "loaded": {  # NEW
+    "example_btn": {  # NEW
+        "English": "Try an example",
+        "Pidgin": "See example",
+        "Yorùbá": "Wo àpẹẹrẹ",
+    },
+    "loaded": {
         "English": "Weather loaded.",
         "Pidgin": "Weather don load.",
         "Yorùbá": "A ti gbé ojú ọjọ́ wọlé.",
     },
-    "not_ready": {  # NEW
+    "not_ready": {
         "English": "Weather for this date is not ready yet. Please pick an earlier date.",
         "Pidgin": "Weather for this date never ready. Abeg pick earlier date.",
         "Yorùbá": "Ojú ọjọ́ ọjọ́ yìí kò tíì wà. Ẹ jọ̀wọ́, ẹ yan ọjọ́ tó ṣáájú.",
     },
-    "load_failed": {  # NEW
+    "load_failed": {
         "English": "Could not load the weather. Please check your internet and try again.",
         "Pidgin": "We no fit load the weather. Abeg check your network make you try again.",
         "Yorùbá": "A kò lè gbé ojú ọjọ́ wọlé. Ẹ jọ̀wọ́, ẹ ṣàyẹ̀wò íńtánẹ́ẹ̀tì yín, kí ẹ tún gbìyànjú.",
+    },
+    "update_hint": {  # NEW
+        "English": "You picked a new date. Press Load weather to use it.",
+        "Pidgin": "You pick new date. Press Load weather make e use am.",
+        "Yorùbá": "Ẹ ti yan ọjọ́ tuntun. Ẹ tẹ Gbé ojú ọjọ́ wọlé láti lò ó.",
+    },
+    "weather_upto": {  # NEW
+        "English": "Weather up to {d}",
+        "Pidgin": "Weather up to {d}",
+        "Yorùbá": "Ojú ọjọ́ títí di {d}",
     },
     "predict": {
         "English": "Predict",
         "Pidgin": "Check am",
         "Yorùbá": "Ṣàyẹ̀wò",
     },
-    "risk_label": {  # NEW wording
-        "English": "Dry-spell risk (0 to 1)",
-        "Pidgin": "Dry spell risk (0 to 1)",
-        "Yorùbá": "Ewu ọ̀dá (0 sí 1)",
+    "risk_label": {
+        "English": "Dry-spell risk",
+        "Pidgin": "Dry spell risk",
+        "Yorùbá": "Ewu ọ̀dá",
     },
     "warn_title": {
         "English": "Warning: a dry spell is likely",
@@ -121,15 +133,15 @@ TEXT = {
         "Pidgin": "We no expect dry spell for the next 7 days. Keep checking, because weather fit change quick quick.",
         "Yorùbá": "A ò retí ọ̀dá láàrín ọjọ́ méje tó ń bọ̀. Ẹ máa ṣàyẹ̀wò lẹ́ẹ̀kan sí i, nítorí ojú ọjọ́ lè yí padà kíákíá.",
     },
-    "off_season": {  # NEW wording (calendar tab removed)
+    "off_season": {
         "English": "This date is outside the rainy season (March to October), when the warning works. Dry weather is normal at this time of year, so no warning is given. You can ask MaizeGuard when the rains usually start.",
         "Pidgin": "This date no dey inside the rainy season (March to October) wey the warning dey work. Dry weather normal for this time, so we no dey give warning. You fit ask MaizeGuard when rain dey usually start.",
         "Yorùbá": "Ọjọ́ yìí kò sí nínú àsìkò òjò (Oṣù Kẹta sí Oṣù Kẹwàá) tí ìkìlọ̀ ti ń ṣiṣẹ́. Ó jẹ́ àdáyébá kí ojú ọjọ́ gbẹ ní àkókò yìí, nítorí náà a kò fi ìkìlọ̀ kankan hàn. Ẹ lè béèrè lọ́wọ́ MaizeGuard ìgbà tí òjò máa ń bẹ̀rẹ̀.",
     },
-    "guide_note": {  # NEW
-        "English": "This is a guide, not a promise. Weather can change, so check again in a few days.",
-        "Pidgin": "Na guide e be, no be promise. Weather fit change, so check again after few days.",
-        "Yorùbá": "Ìtọ́sọ́nà ni èyí, kì í ṣe ìlérí. Ojú ọjọ́ lè yí padà, nítorí náà ẹ tún ṣàyẹ̀wò lẹ́yìn ọjọ́ díẹ̀.",
+    "check_again": {  # NEW
+        "English": "Check again in a few days, because the weather changes.",
+        "Pidgin": "Check again after few days, because weather dey change.",
+        "Yorùbá": "Ẹ tún ṣàyẹ̀wò lẹ́yìn ọjọ́ díẹ̀, nítorí ojú ọjọ́ máa ń yí padà.",
     },
     "listen": {
         "English": "Listen",
@@ -138,9 +150,12 @@ TEXT = {
     },
 }
 
-# ---------- sidebar: language only ----------
+# ---------- sidebar ----------
 with st.sidebar:
     lang = st.selectbox("Language / Èdè", LANGS)
+    st.caption("📍 Ilorin, Kwara State")
+    st.divider()
+    st.link_button("Learn more about MaizeGuard", LEARN_MORE_URL)
 
 
 def t(key):
@@ -175,6 +190,15 @@ def load_stats():
 @st.cache_data
 def load_onset():
     return pd.read_csv("onset_history.csv", index_col=0)["onset_doy"].dropna()
+
+
+@st.cache_data
+def load_kb():
+    try:
+        with open("knowledge_base.md", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
 
 
 def doy_to_text(d):
@@ -276,37 +300,47 @@ def ask_assistant(history, question, lang_label):
 
     r = st.session_state.get("last_result")
     if r:
+        level = (
+            "HIGH (a dry spell may start in the next 7 days)"
+            if r["warn"]
+            else "LOW (no dry spell expected in the next 7 days)"
+        )
         result_text = (
-            f"Latest dry-spell check: risk score {r['score']:.2f}, cut-off {r['threshold']:.2f}, "
-            f"{'WARNING' if r['warn'] else 'no warning'}. Last weather day: {r['last_day']}. "
-            f"Rain in the 14 days: {r['rain_total']:.0f} mm. "
-            f"Dry days in a row now: {r['dry_run']}."
+            f"The farmer's latest check, for {r['last_day']}: dry-spell risk is {level}. "
+            f"Rain in the 14 days up to then: {r['rain_total']:.0f} mm. "
+            f"Dry days in a row at that time: {r['dry_run']}."
         )
     else:
-        result_text = "The farmer has not run a dry-spell check yet."
+        result_text = "The farmer has not run a check yet."
 
     onset = load_onset()
     calendar_text = (
-        f"History (1981-2025): the rains in Ilorin started on median {doy_to_text(onset.median())}, "
-        f"earliest {doy_to_text(onset.min())}, latest {doy_to_text(onset.max())}. "
-        f"Middle half of years: {doy_to_text(onset.quantile(0.25))} to {doy_to_text(onset.quantile(0.75))}."
+        "Only share this if the farmer asks when the rains start: "
+        f"in Ilorin, from 1981 to 2025, the rains usually started around {doy_to_text(onset.median())}. "
+        f"The earliest start was {doy_to_text(onset.min())} and the latest was {doy_to_text(onset.max())}. "
+        f"In half of the years the rains started between {doy_to_text(onset.quantile(0.25))} "
+        f"and {doy_to_text(onset.quantile(0.75))}."
     )
 
     system = (
-        "You are the MaizeGuard Assistant, helping maize farmers in Ilorin, Nigeria understand "
-        "rainfall guidance in simple words. "
+        "You are the MaizeGuard Assistant, a friendly helper for maize farmers in Ilorin, Nigeria. "
         f"Reply in {lang_label} (if Pidgin, use simple Nigerian Pidgin; if Yoruba, use simple Yoruba). "
-        "Keep answers short and clear. "
-        "Only explain the information given below and general maize planting practice. "
-        "Never invent weather forecasts or numbers. "
-        "Never describe a warning as certain, and never say a dry spell will definitely happen. "
-        "Do not add disclaimers about the model or repeat accuracy figures unless the farmer asks. "
-        "If the farmer asks how reliable it is, answer honestly: the model catches about 6 in 10 "
-        "dry spells and gives many false alarms. "
-        "The app covers Ilorin only. If you are unsure, or the question is about something else "
-        "(pesticides, loans, other places), say so and suggest talking to a local agricultural extension officer. "
-        "Do not give medical or legal advice.\n\n"
-        f"{result_text}\n{calendar_text}"
+        "Talk like a helpful neighbour who knows farming: 2 to 4 short sentences, plain words, "
+        "no headings, and no bullet lists unless the farmer asks for a list. "
+        "Answer only what was asked. Do not repeat numbers the farmer did not ask about. "
+        "Do not use technical words such as model, score, cut-off, threshold or probability; "
+        "say 'high risk' or 'low risk' instead. "
+        "Do not talk about how reliable MaizeGuard is, false alarms or limitations unless the farmer asks; "
+        "if asked, answer honestly using the knowledge base. "
+        "Do not tell the farmer to see an extension officer unless the question is outside what you know, "
+        "and then say so in one short sentence. "
+        "Use the knowledge base and the latest check below. If the answer is not there and you are not sure, "
+        "say you are not sure. Never invent forecasts, numbers or dates. "
+        "Never say a dry spell will definitely happen. "
+        "Do not give pesticide, fertiliser dose, loan, medical or legal advice.\n\n"
+        f"=== KNOWLEDGE BASE ===\n{load_kb()}\n\n"
+        f"=== LATEST CHECK ===\n{result_text}\n\n"
+        f"=== RAINFALL HISTORY ===\n{calendar_text}"
     )
 
     contents = [
@@ -344,25 +378,37 @@ def ask_assistant(history, question, lang_label):
 
 
 # ---------- state ----------
-def set_example(name):
-    st.session_state["days"] = pd.DataFrame(EXAMPLES[name]["data"])
-    st.session_state["last_day"] = EXAMPLES[name]["date"]
+def set_example():
+    st.session_state["days"] = pd.DataFrame(EXAMPLE["data"])
+    st.session_state["last_day"] = EXAMPLE["date"]
+    st.session_state["weather_date"] = EXAMPLE["date"]
 
 
 if "days" not in st.session_state:
-    st.session_state["days"] = pd.DataFrame(EXAMPLES["dry"]["data"])
-    st.session_state["last_day"] = EXAMPLES["dry"]["date"]
+    st.session_state["days"] = pd.DataFrame(EXAMPLE["data"])
+    st.session_state["last_day"] = EXAMPLE["date"]
+    st.session_state["weather_date"] = EXAMPLE["date"]
 
 # ---------- style ----------
+@st.cache_data
+def logo_b64():
+    try:
+        with open("maizeguard_logo.jpg", "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except FileNotFoundError:
+        return ""
+
+
 st.markdown(
     """
     <style>
     .hero {
-        background: linear-gradient(135deg, #1B5E20 0%, #43A047 100%);
-        padding: 28px 32px; border-radius: 16px; color: white; margin-bottom: 18px;
+        background: #000000; border-radius: 16px; padding: 14px 12px 18px 12px;
+        margin-bottom: 18px; text-align: center;
     }
+    .hero img { width: 100%; max-width: 560px; height: auto; display: block; margin: 0 auto; }
     .hero h1 { margin: 0; font-size: 2rem; color: white; }
-    .hero p { margin: 6px 0 0 0; font-size: 1.05rem; opacity: 0.95; }
+    .hero p { margin: 8px 0 0 0; font-size: 1.05rem; color: #CDE7CD; }
     .card { padding: 20px 24px; border-radius: 14px; margin-top: 10px; }
     .card h2 { margin: 0 0 6px 0; }
     .card-warn { background: #FFEBEE; border-left: 8px solid #C62828; color: #5D1010; }
@@ -372,10 +418,17 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+_logo = logo_b64()
+hero_inner = (
+    f'<img src="data:image/jpeg;base64,{_logo}" alt="MaizeGuard">'
+    if _logo
+    else "<h1>🌽 MaizeGuard</h1>"
+)
+
 st.markdown(
     f"""
     <div class="hero">
-      <h1>🌽 MaizeGuard</h1>
+      {hero_inner}
       <p>{t("tagline")}</p>
     </div>
     """,
@@ -384,41 +437,44 @@ st.markdown(
 
 # ---------- 1. weather information ----------
 st.subheader("1. Weather information")
+st.caption(t("date_label"))
 
-c1, c2, c3, c4 = st.columns([2, 1, 1, 1.2])
+c1, c2, c3 = st.columns([2, 1, 1])
 with c1:
-    last_day = st.date_input(
+    picked = st.date_input(
         t("date_label"),
         key="last_day",
         max_value=(pd.Timestamp.today() - pd.Timedelta(days=3)).date(),
+        label_visibility="collapsed",
     )
 with c2:
-    st.write("")
-    st.button("Dry March example", on_click=set_example, args=("dry",))
+    load_clicked = st.button(t("load_btn"), use_container_width=True)
 with c3:
-    st.write("")
-    st.button("Wet June example", on_click=set_example, args=("wet",))
-with c4:
-    st.write("")
-    load_clicked = st.button(t("load_btn"))
+    st.button(t("example_btn"), on_click=set_example, use_container_width=True)
 
 if load_clicked:
     try:
         with st.spinner("..."):
-            live = fetch_weather(last_day)
+            live = fetch_weather(picked)
         if len(live) != 14 or live.isna().any().any():
             st.error(t("not_ready"))
         else:
             st.session_state["days"] = live
+            st.session_state["weather_date"] = picked
             st.success(t("loaded"))
     except Exception as e:
         print("Weather error:", e)
         st.error(t("load_failed"))
 
-# ---------- 2. weather summary ----------
 days = st.session_state["days"]
+wdate = st.session_state["weather_date"]
+
+if picked != wdate:
+    st.caption(t("update_hint"))
+
+# ---------- 2. weather summary ----------
 rain = days["PRECTOTCORR"].values
-dates = pd.date_range(end=last_day, periods=14)
+dates = pd.date_range(end=wdate, periods=14)
 
 dry_run = 0
 for r in reversed(rain):
@@ -428,6 +484,7 @@ for r in reversed(rain):
         break
 
 st.subheader("2. Weather summary")
+st.caption(t("weather_upto").format(d=wdate.strftime("%d %b %Y")))
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Rain in 14 days", f"{np.nansum(rain):.0f} mm")
 m2.metric("Rainy days", f"{int((rain >= 1.0).sum())} of 14")
@@ -436,108 +493,98 @@ m4.metric("Average max temperature", f"{days['T2M_MAX'].mean():.1f} °C")
 
 # ---------- 3. guidance ----------
 st.subheader("3. Your guidance")
-tab1, tab2 = st.tabs([t("tab_warning"), t("tab_ask")])
+nav_col, main_col = st.columns([1, 3])
 
-with tab1:
-    if st.button(t("predict"), type="primary"):
-        if days.isna().any().any():
-            st.error(t("load_failed"))
-        elif last_day.month < 3 or last_day.month > 10:
-            st.session_state["last_result"] = None
-            st.info("🌤️ " + t("off_season"))
-        else:
-            score = get_score(days, last_day)
-            warn = score >= THRESHOLD
-
-            st.session_state["last_result"] = {
-                "score": score,
-                "threshold": THRESHOLD,
-                "warn": warn,
-                "last_day": str(last_day),
-                "rain_total": float(np.nansum(rain)),
-                "dry_run": dry_run,
-            }
-
-            st.progress(float(min(max(score, 0.0), 1.0)))
-            st.metric(t("risk_label"), f"{score:.2f}")
-
-            if warn:
-                strong = (" " + t("strong")) if score >= 0.85 else ""
-                st.markdown(
-                    f"""<div class="card card-warn"><h2>⚠️ {t("warn_title")}</h2>
-                    <p>{t("warn_body")}{strong}</p></div>""",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    f"""<div class="card card-ok"><h2>✅ {t("ok_title")}</h2>
-                    <p>{t("ok_body")}</p></div>""",
-                    unsafe_allow_html=True,
-                )
-
-            speech = (
-                t("warn_title") + ". " + t("warn_body")
-                + ((" " + t("strong")) if score >= 0.85 else "")
-                if warn
-                else t("ok_title") + ". " + t("ok_body")
-            )
-            if lang == "Yorùbá":
-                st.caption("🔇 Read-aloud is not available in Yorùbá yet.")
-            else:
-                listen_button(speech, lang, t("listen"))
-
-            signal_date = None
-            for i in range(len(rain) - 2):
-                if np.nansum(rain[i:i + 3]) >= 20:
-                    signal_date = dates[i + 2]
-            if signal_date is not None:
-                st.info(
-                    f"🌱 Good rain: 20 mm or more fell over 3 days ending "
-                    f"{signal_date.strftime('%d %b %Y')}."
-                )
-
-            st.caption(t("guide_note"))
-
-with tab2:
-    st.subheader("MaizeGuard Assistant")
-    st.caption(
-        "Ask about your result or maize planting in Ilorin. "
-        "For example: \"When do the rains usually start?\" "
-        "The assistant can make mistakes, so use it together with the warning. "
-        "Please do not type personal details."
+with nav_col:
+    choice = st.radio(
+        "Guidance",
+        ["warn", "ask"],
+        format_func=lambda k: ("🌦️ " + t("tab_warning")) if k == "warn" else ("💬 " + t("tab_ask")),
+        label_visibility="collapsed",
     )
 
-    if "chat" not in st.session_state:
-        st.session_state["chat"] = []
+with main_col:
+    if choice == "warn":
+        if st.button(t("predict"), type="primary"):
+            if days.isna().any().any():
+                st.error(t("load_failed"))
+            elif wdate.month < 3 or wdate.month > 10:
+                st.session_state["last_result"] = None
+                st.info("🌤️ " + t("off_season"))
+            else:
+                score = get_score(days, wdate)
+                warn = score >= THRESHOLD
 
-    for m in st.session_state["chat"]:
-        with st.chat_message(m["role"]):
-            st.write(m["text"])
+                st.session_state["last_result"] = {
+                    "score": score,
+                    "threshold": THRESHOLD,
+                    "warn": warn,
+                    "last_day": str(wdate),
+                    "rain_total": float(np.nansum(rain)),
+                    "dry_run": dry_run,
+                }
 
-    question = st.chat_input("Ask MaizeGuard...")
-    if question:
-        with st.chat_message("user"):
-            st.write(question)
-        with st.spinner("Thinking..."):
-            answer = ask_assistant(st.session_state["chat"], question, lang)
-        with st.chat_message("assistant"):
-            st.write(answer)
-        st.session_state["chat"].append({"role": "user", "text": question})
-        st.session_state["chat"].append({"role": "assistant", "text": answer})
+                st.progress(float(min(max(score, 0.0), 1.0)))
+                st.metric(t("risk_label"), f"{score:.2f}")
 
-# ---------- about ----------
-st.divider()
-st.markdown("**About MaizeGuard**")
-st.write(
-    "MaizeGuard helps maize farmers in Ilorin plan around dry spells. "
-    "It looks at the last 14 days of weather and checks whether 8 or more days with almost no rain "
-    "may start in the next 7 days."
-)
-st.write(
-    "It learned from weather records for Ilorin from 1981 to 2025 (NASA POWER data) and was tested "
-    "on the years 2013 to 2025."
-)
-st.write(
-    "It is a guide, not a promise. It catches about 6 in 10 dry spells, and sometimes it gives a "
-    "warning when no dry spell comes. It works for Ilorin only, from March to October."
-)
+                if warn:
+                    strong = (" " + t("strong")) if score >= 0.85 else ""
+                    st.markdown(
+                        f"""<div class="card card-warn"><h2>⚠️ {t("warn_title")}</h2>
+                        <p>{t("warn_body")}{strong}</p></div>""",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"""<div class="card card-ok"><h2>✅ {t("ok_title")}</h2>
+                        <p>{t("ok_body")}</p></div>""",
+                        unsafe_allow_html=True,
+                    )
+
+                speech = (
+                    t("warn_title") + ". " + t("warn_body")
+                    + ((" " + t("strong")) if score >= 0.85 else "")
+                    if warn
+                    else t("ok_title") + ". " + t("ok_body")
+                )
+                if lang == "Yorùbá":
+                    st.caption("🔇 Read-aloud is not available in Yorùbá yet.")
+                else:
+                    listen_button(speech, lang, t("listen"))
+
+                signal_date = None
+                for i in range(len(rain) - 2):
+                    if np.nansum(rain[i:i + 3]) >= 20:
+                        signal_date = dates[i + 2]
+                if signal_date is not None:
+                    st.info(
+                        f"🌱 Good rain: 20 mm or more fell over 3 days ending "
+                        f"{signal_date.strftime('%d %b %Y')}."
+                    )
+
+                st.caption(t("check_again"))
+
+    else:
+        st.write("**MaizeGuard Assistant**")
+        st.caption(
+            'Ask in your own words, for example: "When do the rains usually start?" '
+            "Please do not type personal details."
+        )
+
+        if "chat" not in st.session_state:
+            st.session_state["chat"] = []
+
+        for m in st.session_state["chat"]:
+            with st.chat_message(m["role"]):
+                st.write(m["text"])
+
+        question = st.chat_input("Ask MaizeGuard...")
+        if question:
+            with st.chat_message("user"):
+                st.write(question)
+            with st.spinner("Thinking..."):
+                answer = ask_assistant(st.session_state["chat"], question, lang)
+            with st.chat_message("assistant"):
+                st.write(answer)
+            st.session_state["chat"].append({"role": "user", "text": question})
+            st.session_state["chat"].append({"role": "assistant", "text": answer})
